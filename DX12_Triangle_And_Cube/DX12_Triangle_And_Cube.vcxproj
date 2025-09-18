@@ -21,8 +21,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{78716e60-a105-4ebd-b812-d5c1b30d9130}</ProjectGuid>
-    <RootNamespace>DX11LearningProject</RootNamespace>
+    <ProjectGuid>{b7b82493-87a7-4d4e-9d35-9e9d6fa15c45}</ProjectGuid>
+    <RootNamespace>DX12TriangleAndCube</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -102,7 +102,6 @@
       <SDLCheck>true</SDLCheck>
       <PreprocessorDefinitions>_DEBUG;_WINDOWS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
-      <LanguageStandard>stdcpp20</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -124,19 +123,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="DX11_Learning_Project.h" />
+    <ClInclude Include="DX12_Triangle_And_Cube.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="DX11_Learning_Project.cpp" />
+    <ClCompile Include="DX12_Triangle_And_Cube.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="DX11_Learning_Project.rc" />
+    <ResourceCompile Include="DX12_Triangle_And_Cube.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="DX11_Learning_Project.ico" />
+    <Image Include="DX12_Triangle_And_Cube.ico" />
     <Image Include="small.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

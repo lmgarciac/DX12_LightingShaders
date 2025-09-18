@@ -24,17 +24,17 @@
     <ClInclude Include="Resource.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
-    <ClInclude Include="DX11_Learning_Project.h">
+    <ClInclude Include="DX12_Triangle_And_Cube.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="DX11_Learning_Project.cpp">
+    <ClCompile Include="DX12_Triangle_And_Cube.cpp">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="DX11_Learning_Project.rc">
+    <ResourceCompile Include="DX12_Triangle_And_Cube.rc">
       <Filter>Archivos de recursos</Filter>
     </ResourceCompile>
   </ItemGroup>
@@ -42,7 +42,7 @@
     <Image Include="small.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
-    <Image Include="DX11_Learning_Project.ico">
+    <Image Include="DX12_Triangle_And_Cube.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
   </ItemGroup>

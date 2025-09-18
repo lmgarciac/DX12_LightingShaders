@@ -1,17 +1,17 @@
 //{{NO_DEPENDENCIES}}
 // Archivo de inclusión generado de Microsoft Visual C++.
-// Usado por DX11_Learning_Project.rc
+// Usado por DX12_Triangle_And_Cube.rc
 
 #define IDS_APP_TITLE			103
 
 #define IDR_MAINFRAME			128
-#define IDD_DX11LEARNINGPROJECT_DIALOG	102
+#define IDD_DX12TRIANGLEANDCUBE_DIALOG	102
 #define IDD_ABOUTBOX			103
 #define IDM_ABOUT				104
 #define IDM_EXIT				105
-#define IDI_DX11LEARNINGPROJECT			107
+#define IDI_DX12TRIANGLEANDCUBE			107
 #define IDI_SMALL				108
-#define IDC_DX11LEARNINGPROJECT			109
+#define IDC_DX12TRIANGLEANDCUBE			109
 #define IDC_MYICON				2
 #ifndef IDC_STATIC
 #define IDC_STATIC				-1
