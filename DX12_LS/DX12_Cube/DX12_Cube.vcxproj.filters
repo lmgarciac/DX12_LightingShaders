@@ -24,17 +24,17 @@
     <ClInclude Include="Resource.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
-    <ClInclude Include="DX12_Triangle_And_Cube.h">
+    <ClInclude Include="DX12_Cube.h">
       <Filter>Archivos de encabezado</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="DX12_Triangle_And_Cube.cpp">
+    <ClCompile Include="DX12_Cube.cpp">
       <Filter>Archivos de origen</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="DX12_Triangle_And_Cube.rc">
+    <ResourceCompile Include="DX12_Cube.rc">
       <Filter>Archivos de recursos</Filter>
     </ResourceCompile>
   </ItemGroup>
@@ -42,7 +42,7 @@
     <Image Include="small.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
-    <Image Include="DX12_Triangle_And_Cube.ico">
+    <Image Include="DX12_Cube.ico">
       <Filter>Archivos de recursos</Filter>
     </Image>
   </ItemGroup>
