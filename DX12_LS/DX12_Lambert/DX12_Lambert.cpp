@@ -46,10 +46,14 @@ inline UINT Align256(UINT size) { return (size + 255) & ~255u; }
 struct Vertex {
     XMFLOAT3 pos;
     XMFLOAT3 color;
+    XMFLOAT3 normal;
 };
 
 struct alignas(256) CBData {
     XMMATRIX mvp;
+    XMMATRIX world;   // para transformar normales
+    XMFLOAT3 lightDir;// dirección de luz en world (unitaria)
+    float _pad0;      // padding a 16 bytes
 };
 
 //--------------------------------------------------------------------------------------
@@ -93,6 +97,67 @@ XMMATRIX                            g_view;
 
 // Timing
 auto g_t0 = std::chrono::high_resolution_clock::now();
+
+//--------------------------------------------------------------------------------------
+// Shaders (HLSL) embebidos
+//--------------------------------------------------------------------------------------
+const char* g_vsHlsl = R"(
+cbuffer CB : register(b0)
+{
+    float4x4 mvp;
+    float4x4 world;
+    float3   lightDir;
+    float    _pad0;
+};
+
+struct VSIn {
+    float3 pos : POSITION;
+    float3 col : COLOR0;
+    float3 nrm : NORMAL;
+};
+
+struct PSIn {
+    float4 pos : SV_POSITION;
+    float3 col : COLOR0;
+    float3 nrmWS : NORMAL;
+};
+
+PSIn main(VSIn vin) {
+    PSIn vout;
+    vout.pos = mul(float4(vin.pos,1.0), mvp);
+
+    // transformar normal a world (sin traslación)
+    float3 n = mul((float3x3)world, vin.nrm);
+    vout.nrmWS = normalize(n);
+
+    vout.col = vin.col;
+    return vout;
+}
+)";
+
+const char* g_psHlsl = R"(
+cbuffer CB : register(b0)
+{
+    float4x4 mvp;
+    float4x4 world;
+    float3   lightDir;
+    float    _pad0;
+};
+
+struct PSIn {
+    float4 pos   : SV_POSITION;
+    float3 col   : COLOR0;
+    float3 nrmWS : NORMAL;
+};
+
+float4 main(PSIn pin) : SV_TARGET {
+    float3 L = normalize(lightDir);
+    float NdotL = max(0.0, dot(pin.nrmWS, -L)); // luz direccional
+    float ambient = 0.15;                        // un toque de ambiente
+    float lambert = saturate(ambient + NdotL);
+    return float4(pin.col * lambert, 1.0);
+}
+)";
 
 //--------------------------------------------------------------------------------------
 // DX helpers
@@ -300,7 +365,7 @@ void CreateRootSigAndPSO()
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[0].Descriptor.ShaderRegister = 0;
     rootParams[0].Descriptor.RegisterSpace = 0;
-    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // Root signature flags
     D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
@@ -312,8 +377,7 @@ void CreateRootSigAndPSO()
         D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_DOMAIN_SHADER_ROOT_ACCESS |
         D3D12_ROOT_SIGNATURE_FLAG_DENY_HULL_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS |
-        D3D12_ROOT_SIGNATURE_FLAG_DENY_PIXEL_SHADER_ROOT_ACCESS; // CB solo visible al VS
+        D3D12_ROOT_SIGNATURE_FLAG_DENY_GEOMETRY_SHADER_ROOT_ACCESS;
 
     ComPtr<ID3DBlob> sigBlob, errBlob;
     ThrowIfFailed(D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob));
@@ -323,30 +387,19 @@ void CreateRootSigAndPSO()
     // Compilar shaders
     UINT compileFlags =
 #if _DEBUG
-        compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION | D3DCOMPILE_PREFER_FLOW_CONTROL;
+        D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #else
         0;
 #endif
     ComPtr<ID3DBlob> vs, ps;
-
-    std::wstring hlsl = L"Lambert.hlsl";
-    wchar_t full[MAX_PATH];
-    GetFullPathNameW(hlsl.c_str(), MAX_PATH, full, nullptr);
-
-    // VS
-    ThrowIfFailed(D3DCompileFromFile(
-        full, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-        L"VSMain", "vs_5_0", compileFlags, 0, &vs, &errBlob));
-
-    // PS
-    ThrowIfFailed(D3DCompileFromFile(
-        full, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-        L"PSMain", "ps_5_0", compileFlags, 0, &ps, &errBlob));
+    ThrowIfFailed(D3DCompile(g_vsHlsl, strlen(g_vsHlsl), nullptr, nullptr, nullptr, "main", "vs_5_0", compileFlags, 0, &vs, &errBlob));
+    ThrowIfFailed(D3DCompile(g_psHlsl, strlen(g_psHlsl), nullptr, nullptr, nullptr, "main", "ps_5_0", compileFlags, 0, &ps, &errBlob));
 
     // Input layout
     D3D12_INPUT_ELEMENT_DESC il[] = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex,pos),  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex,color),D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex,pos),    D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex,color),  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, offsetof(Vertex,normal), D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     // Rasterizer/Depth/Blend
@@ -393,25 +446,37 @@ void CreateCubeGeometryAndCB()
 {
     // Cubo unitario centrado
     const float s = 0.5f;
+
+    // 24 vértices (4 por cara) con normal plana por cara
     Vertex v[] = {
-        // Frente (z+)
-        {{-s,-s, s}, {1,0,0}}, {{ s,-s, s}, {0,1,0}}, {{ s, s, s}, {0,0,1}}, {{-s, s, s}, {1,1,0}},
-        // Atrás (z-)
-        {{-s,-s,-s}, {1,0,1}}, {{-s, s,-s}, {0,1,1}}, {{ s, s,-s}, {1,1,1}}, {{ s,-s,-s}, {0,0,0}},
+        // Frente (z+), n=(0,0,1)
+        {{-s,-s, s},{1,0,0},{0,0,1}}, {{ s,-s, s},{0,1,0},{0,0,1}},
+        {{ s, s, s},{0,0,1},{0,0,1}}, {{-s, s, s},{1,1,0},{0,0,1}},
+        // Atrás (z-), n=(0,0,-1)
+        {{-s,-s,-s},{1,0,1},{0,0,-1}}, {{-s, s,-s},{0,1,1},{0,0,-1}},
+        {{ s, s,-s},{1,1,1},{0,0,-1}}, {{ s,-s,-s},{0,0,0},{0,0,-1}},
+        // Izquierda (x-), n=(-1,0,0)
+        {{-s,-s,-s},{1,0,1},{-1,0,0}}, {{-s,-s, s},{1,0,0},{-1,0,0}},
+        {{-s, s, s},{1,1,0},{-1,0,0}}, {{-s, s,-s},{0,1,1},{-1,0,0}},
+        // Derecha (x+), n=(1,0,0)
+        {{ s,-s, s},{0,1,0},{1,0,0}}, {{ s,-s,-s},{0,0,0},{1,0,0}},
+        {{ s, s,-s},{1,1,1},{1,0,0}}, {{ s, s, s},{0,0,1},{1,0,0}},
+        // Arriba (y+), n=(0,1,0)
+        {{-s, s, s},{1,1,0},{0,1,0}}, {{ s, s, s},{0,0,1},{0,1,0}},
+        {{ s, s,-s},{1,1,1},{0,1,0}}, {{-s, s,-s},{0,1,1},{0,1,0}},
+        // Abajo (y-), n=(0,-1,0)
+        {{-s,-s,-s},{1,0,1},{0,-1,0}}, {{ s,-s,-s},{0,0,0},{0,-1,0}},
+        {{ s,-s, s},{0,1,0},{0,-1,0}}, {{-s,-s, s},{1,0,0},{0,-1,0}},
     };
+
     uint16_t i[] = {
-        // Frente
-        0,1,2, 0,2,3,
-        // Atrás
-        4,5,6, 4,6,7,
-        // Izq
-        4,0,3, 4,3,5,
-        // Der
-        1,7,6, 1,6,2,
-        // Arriba
-        3,2,6, 3,6,5,
-        // Abajo
-        4,7,1, 4,1,0
+        // 6 caras * 2 triángulos
+        0,1,2, 0,2,3,       // frente
+        4,5,6, 4,6,7,       // atrás
+        8,9,10, 8,10,11,    // izquierda
+        12,13,14, 12,14,15, // derecha
+        16,17,18, 16,18,19, // arriba
+        20,21,22, 20,22,23  // abajo
     };
 
     const UINT vbSize = sizeof(v);
@@ -493,7 +558,16 @@ void UpdateCB()
         XMMatrixRotationY(seconds * 1.1f);
 
     XMMATRIX mvp = mWorld * g_view * g_proj;
-    CBData cb; cb.mvp = XMMatrixTranspose(mvp);
+
+    // luz direccional fija en mundo (arriba-derecha-atrás)
+    XMVECTOR L = XMVector3Normalize(XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f));
+
+
+    CBData cb; 
+    cb.mvp = XMMatrixTranspose(mvp);
+    cb.world = mWorld;                 
+    XMStoreFloat3(&cb.lightDir, L);
+
     *g_cbMapped = cb;
 }
 
