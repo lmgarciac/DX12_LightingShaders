@@ -21,8 +21,8 @@
   <PropertyGroup Label="Globals">
     <VCProjectVersion>17.0</VCProjectVersion>
     <Keyword>Win32Proj</Keyword>
-    <ProjectGuid>{f3cb7882-07e5-47fd-b0b7-4a121d630e25}</ProjectGuid>
-    <RootNamespace>DX12Cube</RootNamespace>
+    <ProjectGuid>{23a1ccff-8a6a-4985-aa8a-ed2eed84e26a}</ProjectGuid>
+    <RootNamespace>DX12BlinnPhong</RootNamespace>
     <WindowsTargetPlatformVersion>10.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
@@ -123,23 +123,23 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="DX12_Cube.h" />
+    <ClInclude Include="DX12_Blinn_Phong.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="DX12_Cube.cpp" />
+    <ClCompile Include="DX12_Blinn_Phong.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="DX12_Cube.rc" />
+    <ResourceCompile Include="DX12_Blinn_Phong.rc" />
   </ItemGroup>
   <ItemGroup>
-    <Image Include="DX12_Cube.ico" />
+    <Image Include="DX12_Blinn_Phong.ico" />
     <Image Include="small.ico" />
   </ItemGroup>
   <ItemGroup>
-    <CopyFileToFolders Include="Unlit.hlsl">
+    <CopyFileToFolders Include="Blinn-Phong.hlsl">
       <FileType>Document</FileType>
     </CopyFileToFolders>
   </ItemGroup>

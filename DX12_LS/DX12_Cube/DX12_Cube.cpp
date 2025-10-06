@@ -329,19 +329,13 @@ void CreateRootSigAndPSO()
 #endif
     ComPtr<ID3DBlob> vs, ps;
 
-    std::wstring hlsl = L"Lambert.hlsl";
-    wchar_t full[MAX_PATH];
-    GetFullPathNameW(hlsl.c_str(), MAX_PATH, full, nullptr);
-
-    // VS
     ThrowIfFailed(D3DCompileFromFile(
-        full, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-        L"VSMain", "vs_5_0", compileFlags, 0, &vs, &errBlob));
+        L"Unlit.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        "VSMain", "vs_5_0", compileFlags, 0, &vs, &errBlob));
 
-    // PS
     ThrowIfFailed(D3DCompileFromFile(
-        full, nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-        L"PSMain", "ps_5_0", compileFlags, 0, &ps, &errBlob));
+        L"Unlit.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        "PSMain", "ps_5_0", compileFlags, 0, &ps, &errBlob));
 
     // Input layout
     D3D12_INPUT_ELEMENT_DESC il[] = {

@@ -29,7 +29,7 @@ static const UINT Width = 1280;
 static const UINT Height = 720;
 
 // arriba, globals
-int g_mode = 2; // 0=Unlit, 1=Ambient, 2=Lambert
+int g_mode = 3; // 0=Unlit, 1=Ambient, 2=Lambert, 3=Specular, 4=All
 //--------------------------------------------------------------------------------------
 // Util
 //--------------------------------------------------------------------------------------
@@ -53,11 +53,16 @@ struct Vertex {
 
 struct alignas(256) CBData {
     XMMATRIX mvp;
-    XMMATRIX world;   // para transformar normales
-    XMFLOAT3 lightDir;// dirección de luz en world (unitaria)
-    float    ambient;  // nuevo
-    int      mode;     // nuevo (0,1,2)
-    XMFLOAT3 _pad1;      // padding a 16 bytes
+    XMMATRIX world;
+    XMFLOAT3 lightDir;
+    float    ambient;
+    int      mode;      // lo dejamos aunque no lo usemos
+    XMFLOAT3 _pad1;
+
+    XMFLOAT3 viewPos;   // NUEVO
+    float    shininess; // NUEVO
+    float    specIntensity; // NUEVO
+    XMFLOAT3 _pad2;
 };
 
 //--------------------------------------------------------------------------------------
@@ -99,6 +104,8 @@ CBData* g_cbMapped = nullptr;
 XMMATRIX                            g_proj;
 XMMATRIX                            g_view;
 
+XMFLOAT3 g_eyeWS; // NUEVO
+
 // Timing
 auto g_t0 = std::chrono::high_resolution_clock::now();
 
@@ -135,18 +142,17 @@ DXGI_FORMAT ChooseDepthFormat() { return DXGI_FORMAT_D32_FLOAT; }
 //--------------------------------------------------------------------------------------
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
-	switch (msg)
-	{
-	    case WM_DESTROY: PostQuitMessage(0); return 0;
-	    case WM_KEYDOWN:
-	    {
-		    if (wParam == 'T') 
-            {           // tecla T
-			    g_mode = (g_mode + 1) % 3; // 0->1->2->0
-    		}
-	    	return 0;
-	    }
-	}
+    switch (msg)
+    {
+    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_KEYDOWN:
+    {
+        if (wParam == 'T') {
+            g_mode = (g_mode + 1) % 5; // 0→1→2→3→4→0
+        }
+        return 0;
+    }
+    }
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
@@ -346,11 +352,11 @@ void CreateRootSigAndPSO()
     ComPtr<ID3DBlob> vs, ps;
 
     ThrowIfFailed(D3DCompileFromFile(
-        L"Lambert.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        L"Blinn-Phong.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
         "VSMain", "vs_5_0", compileFlags, 0, &vs, &errBlob));
 
     ThrowIfFailed(D3DCompileFromFile(
-        L"Lambert.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        L"Blinn-Phong.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
         "PSMain", "ps_5_0", compileFlags, 0, &ps, &errBlob));
 
     // Input layout
@@ -521,12 +527,17 @@ void UpdateCB()
     XMVECTOR L = XMVector3Normalize(XMVectorSet(0.0f, -1.0f, 0.0f, 0.0f));
 
 
-    CBData cb; 
+    CBData cb;
     cb.mvp = XMMatrixTranspose(mvp);
-    cb.world = mWorld;                 
+    cb.world = mWorld;
     XMStoreFloat3(&cb.lightDir, L);
     cb.ambient = 0.15f;      // ambiente base
     cb.mode = g_mode;     // desde el toggle
+
+    cb.viewPos = g_eyeWS;     // NUEVO
+    cb.shininess = 64.0f;     // pruebitas: 32-128
+    cb.specIntensity = 0.6f;  // k_s
+    *g_cbMapped = cb;
 
     *g_cbMapped = cb;
 }
@@ -603,6 +614,8 @@ void InitCamera()
 
     g_view = XMMatrixLookAtLH(eye, at, up);
     g_proj = XMMatrixPerspectiveFovLH(XMConvertToRadians(60.f), float(Width) / float(Height), 0.1f, 100.0f);
+
+    XMStoreFloat3(&g_eyeWS, eye); // NUEVO
 }
 
 //--------------------------------------------------------------------------------------

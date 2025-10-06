@@ -2,8 +2,10 @@ cbuffer CB : register(b0)
 {
     float4x4 mvp;
     float4x4 world;
-    float3 lightDir; // dirección del rayo (de la luz hacia abajo si usas -L)
-    float _pad0;
+    float3 lightDir;
+    float ambient;
+    int mode; // 0=Unlit, 1=Ambient, 2=Lambert
+    float3 _pad1;
 };
 
 struct VSIn
@@ -30,8 +32,21 @@ PSIn VSMain(VSIn vin)
 
 float4 PSMain(PSIn pin) : SV_TARGET
 {
+    float3 base = pin.col;
+
+    if (mode == 0)
+    { // Unlit
+        return float4(base, 1);
+    }
+
+    if (mode == 1)
+    { // Solo ambiente
+        return float4(base * ambient, 1);
+    }
+
+    // 2 = Lambert
     float3 L = normalize(lightDir);
-    float NdotL = max(0.0, dot(pin.nrmWS, -L)); // usa -L si lightDir apunta “hacia abajo”
-    float ambient = 0.15;
-    return float4(pin.col * saturate(ambient + NdotL), 1);
+    float NdotL = max(0.0, dot(pin.nrmWS, -L));
+    float lambert = saturate(ambient + NdotL);
+    return float4(base * lambert, 1);
 }
