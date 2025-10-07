@@ -163,7 +163,7 @@ void CreateAppWindow(HINSTANCE hInst)
     RECT rc = { 0,0,(LONG)Width,(LONG)Height };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
 
-    g_hWnd = CreateWindow(wc.lpszClassName, L"DX12 Rotating Cube (no d3dx12.h)",
+    g_hWnd = CreateWindow(wc.lpszClassName, L"DX12 Rotating Cube Lambert",
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
         rc.right - rc.left, rc.bottom - rc.top,
         nullptr, nullptr, hInst, nullptr);

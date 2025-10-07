@@ -3,6 +3,65 @@
 // Requiere Windows 10 SDK+
 // No usa d3dx12.h (todo structs/manual)
 
+
+// INSTRUCCIONES
+
+// PRESIONAR T PARA CAMBIAR ENTRE MODOS DE ILUMINACION
+
+// 0 = Unlit                         // Sin iluminación: muestra solo el color base (debug de albedo).
+// 1 = Ambient (placeholder)         // Luz ambiente homogénea (aprox.) para no dejar todo negro sin luces directas.
+// 2 = Difuso Lambert only           // Solo componente difusa (Lambert): color “mate” según el ángulo N·L.
+// 3 = Especular PBR only            // Solo brillo especular (Cook–Torrance GGX + Fresnel).
+// 4 = Direct PBR (difuso+spec)      // Luz directa PBR (difuso + especular), sin ambiente/IBL.
+// 5 = PBR completo básico           // Ambiente simple (placeholder) + luz directa PBR. (Luego se reemplaza por IBL).
+
+// PRESIONAR M para alternar valores de Metallic
+// Nota: Metallic representa si el material es dieléctrico (≈0) o metálico (≈1).
+//       0 → hay difuso y el especular tiene F0 bajo (≈0.04, neutro).
+//       1 → no hay difuso y el especular se tiñe con el baseColor (F0 alto y coloreado).
+
+// PRESIONAR R para alternar valores de Roughness
+// Nota: Roughness controla la microrrugosidad de la superficie.
+//       Bajo → highlight chico y brillante (tipo espejo).
+//       Alto → highlight ancho y tenue (superficie mate).
+
+// PRESIONAR A para alternar valores de Ambient Occlusion
+// Nota: Ambient Occlusion atenúa SOLO la luz ambiental/IBL en oquedades y contactos.
+//       No afecta la luz directa; oscurece “huecos” donde el ambiente llega menos.
+
+// Ayuda teórica:
+
+// Cook-Torrance es: 
+// Un modelo físico de iluminación especular. Describe cómo una superficie refleja la luz
+// considerando micro-facetas (pequeñas inclinaciones), auto-sombras y reflejos angulares realistas.
+// Es la base del PBR moderno (Physically-Based Rendering).
+
+// GGX es: 
+// Una función de distribución de micro-facetas usada dentro del modelo Cook-Torrance.
+// Define cuántas micro-facetas están alineadas con la luz. Produce reflejos más suaves y realistas
+// que modelos antiguos (como Phong o Beckmann).
+
+// Fresnel es: 
+// Un fenómeno óptico real que determina cuánta luz se refleja dependiendo del ángulo de visión.
+// A ángulos rasantes, toda superficie refleja más. En PBR se usa la aproximación de Schlick,
+// que simula este comportamiento de forma barata y eficiente.
+
+// IBL es: 
+// Image-Based Lighting. Es una técnica que usa un mapa del entorno (cubemap o panorama)
+// para aportar iluminación ambiental difusa y especular realista,
+// reemplazando la "ambient light" plana de los modelos clásicos.
+
+// F0 es: 
+// “Reflectancia en incidencia normal”. Indica cuánto refleja un material cuando la luz incide de frente.
+// Los materiales no metálicos (dieléctricos) tienen un F0 bajo (~0.04), 
+// mientras que los metales tienen un F0 alto y del color del material.
+
+// Oquedades y contactos es: 
+// Regiones donde la luz ambiental casi no llega (por ejemplo, un pliegue o la unión entre objetos).
+// En PBR se simulan con el mapa de Ambient Occlusion (AO), que oscurece esas zonas.
+
+
+
 #include <windows.h>
 #include <wrl/client.h>
 #include <d3d12.h>
@@ -28,8 +87,8 @@ static const UINT FrameCount = 2;
 static const UINT Width = 1280;
 static const UINT Height = 720;
 
-// arriba, globals
-int g_mode = 3; // 0=Unlit, 1=Ambient, 2=Lambert, 3=Specular, 4=All
+int g_mode = 5;
+
 //--------------------------------------------------------------------------------------
 // Util
 //--------------------------------------------------------------------------------------
@@ -37,13 +96,7 @@ int g_mode = 3; // 0=Unlit, 1=Ambient, 2=Lambert, 3=Specular, 4=All
 #define SAFE_RELEASE(p) if(p){ (p)->Release(); (p)=nullptr; }
 #endif
 
-inline void ThrowIfFailed(HRESULT hr) { 
-    if (FAILED(hr)) 
-    { 
-        assert(false); 
-        ExitProcess((UINT)hr); 
-    } 
-}
+inline void ThrowIfFailed(HRESULT hr) { if (FAILED(hr)) { assert(false); ExitProcess((UINT)hr); } }
 
 // Alinear a múltiplos de 256 (para CBVs)
 inline UINT Align256(UINT size) { return (size + 255) & ~255u; }
@@ -60,15 +113,15 @@ struct Vertex {
 struct alignas(256) CBData {
     XMMATRIX mvp;
     XMMATRIX world;
-    XMFLOAT3 lightDir;
-    float    ambient;
-    int      mode;      // lo dejamos aunque no lo usemos
-    XMFLOAT3 _pad1;
+    XMFLOAT3 lightDir; float ambient;
+    int mode;           XMFLOAT3 _pad1;
+    XMFLOAT3 viewPos;   float shininess;
+    float specIntensity; XMFLOAT3 _pad2;
 
-    XMFLOAT3 viewPos;   // NUEVO
-    float    shininess; // NUEVO
-    float    specIntensity; // NUEVO
-    XMFLOAT3 _pad2;
+    // NUEVO (material)
+    XMFLOAT3 baseColor; float metallic;
+    float roughness;    float ao;
+    XMFLOAT2 _pad3; // padding
 };
 
 //--------------------------------------------------------------------------------------
@@ -115,6 +168,22 @@ XMFLOAT3 g_eyeWS; // NUEVO
 // Timing
 auto g_t0 = std::chrono::high_resolution_clock::now();
 
+// --- NUEVO: Presets de material y estado actual ---
+static const float g_metallicPresets[] = { 0.0f, 0.1f, 0.5f, 1.0f };
+static const float g_roughnessPresets[] = { 0.08f, 0.35f, 0.6f, 0.9f };
+static const float g_aoPresets[] = { 0.0f, 0.5f, 0.8f, 1.0f };
+
+static int   g_metallicIdx = 0;
+static int   g_roughnessIdx = 1;
+static int   g_aoIdx = 3;
+
+static float g_metallic = g_metallicPresets[g_metallicIdx];
+static float g_roughness = g_roughnessPresets[g_roughnessIdx];
+static float g_ao = g_aoPresets[g_aoIdx];
+
+// opcional: color base “cobre”
+static XMFLOAT3 g_baseColor = XMFLOAT3(0.95f, 0.25f, 0.20f);
+
 //--------------------------------------------------------------------------------------
 // DX helpers
 //--------------------------------------------------------------------------------------
@@ -143,6 +212,14 @@ void Transition(ID3D12GraphicsCommandList* cl, ID3D12Resource* res,
 DXGI_FORMAT ChooseBackbufferFormat() { return DXGI_FORMAT_R8G8B8A8_UNORM; }
 DXGI_FORMAT ChooseDepthFormat() { return DXGI_FORMAT_D32_FLOAT; }
 
+void UpdateWindowTitle()
+{
+    wchar_t buffer[256];
+    swprintf_s(buffer, L"DX12 PBR  |  Mode: %d  |  metallic=%.2f  roughness=%.2f  ao=%.2f",
+        g_mode, g_metallic, g_roughness, g_ao);
+    SetWindowText(g_hWnd, buffer);
+}
+
 //--------------------------------------------------------------------------------------
 // Create Window
 //--------------------------------------------------------------------------------------
@@ -150,14 +227,30 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
     {
-    case WM_DESTROY: PostQuitMessage(0); return 0;
-    case WM_KEYDOWN:
-    {
-        if (wParam == 'T') {
-            g_mode = (g_mode + 1) % 5; // 0→1→2→3→4→0
+        case WM_DESTROY: PostQuitMessage(0); return 0;
+        case WM_KEYDOWN:
+        {
+            if (wParam == 'T') {
+                g_mode = (g_mode + 1) % 6; // 0..5
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'M') {
+                g_metallicIdx = (g_metallicIdx + 1) % (int)(sizeof(g_metallicPresets) / sizeof(float));
+                g_metallic = g_metallicPresets[g_metallicIdx];
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'R') {
+                g_roughnessIdx = (g_roughnessIdx + 1) % (int)(sizeof(g_roughnessPresets) / sizeof(float));
+                g_roughness = g_roughnessPresets[g_roughnessIdx];
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'A') {
+                g_aoIdx = (g_aoIdx + 1) % (int)(sizeof(g_aoPresets) / sizeof(float));
+                g_ao = g_aoPresets[g_aoIdx];
+                UpdateWindowTitle();
+            }
+            return 0;
         }
-        return 0;
-    }
     }
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -175,7 +268,7 @@ void CreateAppWindow(HINSTANCE hInst)
     RECT rc = { 0,0,(LONG)Width,(LONG)Height };
     AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, FALSE);
 
-    g_hWnd = CreateWindow(wc.lpszClassName, L"DX12 Rotating Cube Blinn-Phong (Press T to switch modes)",
+    g_hWnd = CreateWindow(wc.lpszClassName, L"DX12 Rotating Cube PBR (Press T to switch modes)",
         WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
         rc.right - rc.left, rc.bottom - rc.top,
         nullptr, nullptr, hInst, nullptr);
@@ -358,11 +451,11 @@ void CreateRootSigAndPSO()
     ComPtr<ID3DBlob> vs, ps;
 
     ThrowIfFailed(D3DCompileFromFile(
-        L"Blinn-Phong.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        L"PBR.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
         "VSMain", "vs_5_0", compileFlags, 0, &vs, &errBlob));
 
     ThrowIfFailed(D3DCompileFromFile(
-        L"Blinn-Phong.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
+        L"PBR.hlsl", nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE,
         "PSMain", "ps_5_0", compileFlags, 0, &ps, &errBlob));
 
     // Input layout
@@ -543,6 +636,13 @@ void UpdateCB()
     cb.viewPos = g_eyeWS;     // NUEVO
     cb.shininess = 64.0f;     // pruebitas: 32-128
     cb.specIntensity = 0.6f;  // k_s
+
+    // --- Material desde presets / teclas ---
+    cb.baseColor = g_baseColor;
+    cb.metallic = g_metallic;   // 0..1, tecla M
+    cb.roughness = g_roughness;  // 0..1, tecla R
+    cb.ao = g_ao;         // 0..1, tecla A
+
     *g_cbMapped = cb;
 
     *g_cbMapped = cb;
@@ -624,45 +724,14 @@ void InitCamera()
     XMStoreFloat3(&g_eyeWS, eye); // NUEVO
 }
 
-const wchar_t* ModeName(int m) {
-    switch (m) {
-    case 0: return L"Unlit";
-    case 1: return L"Ambient";
-    case 2: return L"Lambert";
-    case 3: return L"Specular";
-    case 4: return L"All";
-    default: return L"?";
-    }
-}
-
-void DrawOverlayText()
-{
-    HDC hdc = GetDC(g_hWnd);
-    if (!hdc) return;
-
-    SetBkMode(hdc, TRANSPARENT);
-    SetTextColor(hdc, RGB(255, 255, 255));
-
-    // sombreado simple para contraste
-    TextOutW(hdc, 11, 11, L"Presione T para cambiar modelos de iluminación", 43);
-    SetTextColor(hdc, RGB(0, 0, 0));
-    TextOutW(hdc, 10, 10, L"Presione T para cambiar modelos de iluminación", 43);
-
-    // modo actual
-    wchar_t buf[128];
-    wsprintfW(buf, L"Modo actual: %s", ModeName(g_mode));
-    SetTextColor(hdc, RGB(255, 255, 0));
-    TextOutW(hdc, 10, 28, buf, lstrlenW(buf));
-
-    ReleaseDC(g_hWnd, hdc);
-}
-
 //--------------------------------------------------------------------------------------
 // Main
 //--------------------------------------------------------------------------------------
 int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
 {
     CreateAppWindow(hInst);
+    UpdateWindowTitle();
+
     CreateFactoryAndDevice();
     CreateSwapchainAndRTVs();
     CreateDepthBuffer();
@@ -687,7 +756,6 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
             RecordRender();
             g_cmdQueue->ExecuteCommandLists(1, lists);
             Present();
-            DrawOverlayText(); // GDI encima del swapchain (debug overlay)
         }
     }
 
