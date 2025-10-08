@@ -82,7 +82,8 @@ PSIn VSMain(VSIn i)
     PSIn o;
     float4 pWS = mul(float4(i.pos, 1), world);
     o.pos = mul(float4(i.pos, 1), mvp);
-    o.nrmWS = normalize(mul((float3x3) world, i.nrm));
+    float3x3 M = (float3x3) world;
+    o.nrmWS = normalize(mul(i.nrm, transpose(M))); // válido porque tu world es rotación pura    
     o.col = i.col;
     o.posWS = pWS.xyz;
     return o;

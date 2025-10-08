@@ -31,6 +31,11 @@
 
 //PRESIONAR P para frenar la rotación del Cubo
 
+//PRESIONAR G para alternar entre cubo y esfera
+
+//PRESIONAR F para fijar la luz frente a la cámara
+
+
 // Ayuda teórica:
 
 // Cook-Torrance es: 
@@ -210,6 +215,9 @@ UINT g_sphereIndexCount = 0;
 // --- Selector de geometría: 0=Cubo, 1=Esfera ---
 static int g_geomMode = 0;
 
+static bool  g_lightPinnedFront = false; // luz fija frente a cámara
+static float g_lightFrontDist = 1.2f;  // distancia desde la cámara al origen
+
 //--------------------------------------------------------------------------------------
 // DX helpers
 //--------------------------------------------------------------------------------------
@@ -281,6 +289,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             }
             else if (wParam == 'G') { // alternar geometría
                 g_geomMode = (g_geomMode + 1) % 2; // 0..1
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'F') {               // F = fijar/liberar luz frente a cámara
+                g_lightPinnedFront = !g_lightPinnedFront;
                 UpdateWindowTitle();
             }
             return 0;
@@ -685,12 +697,12 @@ void CreateSphereGeometry(float radius = 0.5f, int stacks = 32, int slices = 32)
 
             // Dos triángulos por quad
             inds.push_back((uint16_t)i0);
-            inds.push_back((uint16_t)i2);
             inds.push_back((uint16_t)i1);
+            inds.push_back((uint16_t)i2);
 
             inds.push_back((uint16_t)i1);
-            inds.push_back((uint16_t)i2);
             inds.push_back((uint16_t)i3);
+            inds.push_back((uint16_t)i2);
         }
     }
 
@@ -788,13 +800,20 @@ void UpdateCB()
     cb.roughness = g_roughness;  // 0..1, tecla R
     cb.ao = g_ao;         // 0..1, tecla A
 
-    // --- Luz puntual (órbita simple para visualizar 1/r²) ---
-    float radius = 1.2f;
-    XMFLOAT3 lightPosWS(
-        cosf(seconds) * radius,  // X: cos(θ) * radio
-        0.0f,                    // Y fijo (altura de la luz)
-        sinf(seconds) * radius   // Z: sin(θ) * radio
-    );
+    XMFLOAT3 lightPosWS;
+    if (g_lightPinnedFront) {
+        // vector forward de la cámara hacia el origen (0,0,0)
+        XMVECTOR eyeV = XMLoadFloat3(&g_eyeWS);
+        XMVECTOR toOrigin = XMVector3Normalize(XMVectorSubtract(XMVectorZero(), eyeV));
+        XMVECTOR posV = XMVectorAdd(eyeV, XMVectorScale(toOrigin, g_lightFrontDist));
+        XMStoreFloat3(&lightPosWS, posV);
+    }
+    else {
+        // órbita simple en XZ
+        float radius = 1.2f;                // probá 1.2 para que pase bien por delante
+        float angle = seconds;             // velocidad 1 rad/s
+        lightPosWS = XMFLOAT3(cosf(angle) * radius, 1.0f, sinf(angle) * radius);
+    }
 
     // Colocar en el CB
     cb.lightPos = lightPosWS;
