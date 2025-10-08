@@ -29,6 +29,8 @@
 // Nota: Ambient Occlusion atenúa SOLO la luz ambiental/IBL en oquedades y contactos.
 //       No afecta la luz directa; oscurece “huecos” donde el ambiente llega menos.
 
+//PRESIONAR P para frenar la rotación del Cubo
+
 // Ayuda teórica:
 
 // Cook-Torrance es: 
@@ -113,15 +115,20 @@ struct Vertex {
 struct alignas(256) CBData {
     XMMATRIX mvp;
     XMMATRIX world;
-    XMFLOAT3 lightDir; float ambient;
-    int mode;           XMFLOAT3 _pad1;
-    XMFLOAT3 viewPos;   float shininess;
-    float specIntensity; XMFLOAT3 _pad2;
+    XMFLOAT3 lightDir; float    ambient;      // (queda para compatibilidad)
+    int      mode;     XMFLOAT3 _pad1;
 
-    // NUEVO (material)
+    XMFLOAT3 viewPos;  float    shininess;
+    float    specIntensity; XMFLOAT3 _pad2;
+
+    // Material (ya agregado en el paso 1)
     XMFLOAT3 baseColor; float metallic;
-    float roughness;    float ao;
-    XMFLOAT2 _pad3; // padding
+    float    roughness; float  ao;
+    XMFLOAT2 _pad3;
+
+    // --- NUEVO: luz puntual física ---
+    XMFLOAT3 lightPos;     float lightIntensity; // intensidad en “unidades arbitrarias”
+    XMFLOAT3 lightColor;   float _pad4;          // RGB de la luz (1,1,1 blanco)
 };
 
 //--------------------------------------------------------------------------------------
@@ -183,6 +190,25 @@ static float g_ao = g_aoPresets[g_aoIdx];
 
 // opcional: color base “cobre”
 static XMFLOAT3 g_baseColor = XMFLOAT3(0.95f, 0.25f, 0.20f);
+
+// Luz: parámetros base (podés ajustarlos)
+static XMFLOAT3 g_lightColor = XMFLOAT3(1.0f, 1.0f, 1.0f);
+static float    g_lightIntensity = 60.0f; // probá 10..100 según gusto
+
+// --- NUEVO: control de rotación del cubo ---
+static bool g_pauseRotation = false;
+static float g_rotTime = 0.0f; // tiempo acumulado SOLO para la rotación del cubo
+static std::chrono::high_resolution_clock::time_point g_prevTick;
+
+// --- Geometría: esfera ---
+ComPtr<ID3D12Resource> g_sphereVB;
+ComPtr<ID3D12Resource> g_sphereIB;
+D3D12_VERTEX_BUFFER_VIEW g_sphereVBView = {};
+D3D12_INDEX_BUFFER_VIEW  g_sphereIBView = {};
+UINT g_sphereIndexCount = 0;
+
+// --- Selector de geometría: 0=Cubo, 1=Esfera ---
+static int g_geomMode = 0;
 
 //--------------------------------------------------------------------------------------
 // DX helpers
@@ -247,6 +273,14 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
             else if (wParam == 'A') {
                 g_aoIdx = (g_aoIdx + 1) % (int)(sizeof(g_aoPresets) / sizeof(float));
                 g_ao = g_aoPresets[g_aoIdx];
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'P') {       // Pause/Resume cube rotation
+                g_pauseRotation = !g_pauseRotation;
+                UpdateWindowTitle();
+            }
+            else if (wParam == 'G') { // alternar geometría
+                g_geomMode = (g_geomMode + 1) % 2; // 0..1
                 UpdateWindowTitle();
             }
             return 0;
@@ -607,6 +641,110 @@ void CreateCubeGeometryAndCB()
 }
 
 //--------------------------------------------------------------------------------------
+// Geometry (sphere)
+//--------------------------------------------------------------------------------------
+
+void CreateSphereGeometry(float radius = 0.5f, int stacks = 32, int slices = 32)
+{
+    std::vector<Vertex> verts;
+    std::vector<uint16_t> inds;
+    verts.reserve((stacks + 1) * (slices + 1));
+    inds.reserve(stacks * slices * 6);
+
+    for (int y = 0; y <= stacks; ++y)
+    {
+        float v = float(y) / stacks;           // [0,1]
+        float phi = v * XM_PI;                 // [0,π]
+        float sinPhi = sinf(phi), cosPhi = cosf(phi);
+
+        for (int x = 0; x <= slices; ++x)
+        {
+            float u = float(x) / slices;       // [0,1]
+            float theta = u * XM_2PI;          // [0,2π]
+            float sinTheta = sinf(theta), cosTheta = cosf(theta);
+
+            XMFLOAT3 n = XMFLOAT3(cosTheta * sinPhi, cosPhi, sinTheta * sinPhi);
+            XMFLOAT3 p = XMFLOAT3(n.x * radius, n.y * radius, n.z * radius);
+
+            // color simple por normal (debug)
+            XMFLOAT3 c = XMFLOAT3(0.5f * (n.x + 1.0f), 0.5f * (n.y + 1.0f), 0.5f * (n.z + 1.0f));
+
+            verts.push_back({ p, c, n });
+        }
+    }
+
+    int stride = slices + 1;
+    for (int y = 0; y < stacks; ++y)
+    {
+        for (int x = 0; x < slices; ++x)
+        {
+            uint32_t i0 = y * stride + x;
+            uint32_t i1 = i0 + 1;
+            uint32_t i2 = i0 + stride;
+            uint32_t i3 = i2 + 1;
+
+            // Dos triángulos por quad
+            inds.push_back((uint16_t)i0);
+            inds.push_back((uint16_t)i2);
+            inds.push_back((uint16_t)i1);
+
+            inds.push_back((uint16_t)i1);
+            inds.push_back((uint16_t)i2);
+            inds.push_back((uint16_t)i3);
+        }
+    }
+
+    g_sphereIndexCount = (UINT)inds.size();
+
+    // Subir a GPU (UPLOAD como el cubo)
+    const UINT vbSize = (UINT)(verts.size() * sizeof(Vertex));
+    const UINT ibSize = (UINT)(inds.size() * sizeof(uint16_t));
+
+    // VB
+    {
+        D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = vbSize; rd.Height = 1; rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1; rd.SampleDesc = { 1,0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_sphereVB)));
+
+        void* data = nullptr; D3D12_RANGE rr = { 0,0 };
+        ThrowIfFailed(g_sphereVB->Map(0, &rr, &data));
+        memcpy(data, verts.data(), vbSize);
+        g_sphereVB->Unmap(0, nullptr);
+
+        g_sphereVBView.BufferLocation = g_sphereVB->GetGPUVirtualAddress();
+        g_sphereVBView.StrideInBytes = sizeof(Vertex);
+        g_sphereVBView.SizeInBytes = vbSize;
+    }
+
+    // IB
+    {
+        D3D12_HEAP_PROPERTIES hp = {}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = ibSize; rd.Height = 1; rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1; rd.SampleDesc = { 1,0 }; rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(g_device->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_sphereIB)));
+
+        void* data = nullptr; D3D12_RANGE rr = { 0,0 };
+        ThrowIfFailed(g_sphereIB->Map(0, &rr, &data));
+        memcpy(data, inds.data(), ibSize);
+        g_sphereIB->Unmap(0, nullptr);
+
+        g_sphereIBView.BufferLocation = g_sphereIB->GetGPUVirtualAddress();
+        g_sphereIBView.Format = DXGI_FORMAT_R16_UINT;
+        g_sphereIBView.SizeInBytes = ibSize;
+    }
+}
+
+
+//--------------------------------------------------------------------------------------
 // Update + Record + Present
 //--------------------------------------------------------------------------------------
 void UpdateCB()
@@ -615,10 +753,17 @@ void UpdateCB()
     auto t1 = std::chrono::high_resolution_clock::now();
     float seconds = std::chrono::duration<float>(t1 - g_t0).count();
 
-    // Matrices
+    // Δt para rotación del cubo (acumulado solo si no está en pausa)
+    float dt = std::chrono::duration<float>(t1 - g_prevTick).count();
+    g_prevTick = t1;
+    if (!g_pauseRotation) {
+        g_rotTime += dt;
+    }
+
+    // Matriz de mundo: usar g_rotTime (no seconds) para la rotación del cubo
     XMMATRIX mWorld =
-        XMMatrixRotationX(seconds * 0.7f) *
-        XMMatrixRotationY(seconds * 1.1f);
+        XMMatrixRotationX(g_rotTime * 0.7f) *
+        XMMatrixRotationY(g_rotTime * 1.1f);
 
     XMMATRIX mvp = mWorld * g_view * g_proj;
 
@@ -643,9 +788,21 @@ void UpdateCB()
     cb.roughness = g_roughness;  // 0..1, tecla R
     cb.ao = g_ao;         // 0..1, tecla A
 
-    *g_cbMapped = cb;
+    // --- Luz puntual (órbita simple para visualizar 1/r²) ---
+    float radius = 1.2f;
+    XMFLOAT3 lightPosWS(
+        cosf(seconds) * radius,  // X: cos(θ) * radio
+        0.0f,                    // Y fijo (altura de la luz)
+        sinf(seconds) * radius   // Z: sin(θ) * radio
+    );
+
+    // Colocar en el CB
+    cb.lightPos = lightPosWS;
+    cb.lightIntensity = g_lightIntensity;
+    cb.lightColor = g_lightColor;
 
     *g_cbMapped = cb;
+
 }
 
 void RecordRender()
@@ -656,8 +813,8 @@ void RecordRender()
     // Seteo estado
     g_cmdList->SetGraphicsRootSignature(g_rootSig.Get());
     g_cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    g_cmdList->IASetVertexBuffers(0, 1, &g_vbView);
-    g_cmdList->IASetIndexBuffer(&g_ibView);
+    //g_cmdList->IASetVertexBuffers(0, 1, &g_vbView);
+    //g_cmdList->IASetIndexBuffer(&g_ibView);
     g_cmdList->SetGraphicsRootConstantBufferView(0, g_cb->GetGPUVirtualAddress());
     g_cmdList->RSSetViewports(1, &g_viewport);
     g_cmdList->RSSetScissorRects(1, &g_scissorRect);
@@ -680,8 +837,22 @@ void RecordRender()
     // Bind RT/DS
     g_cmdList->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
 
-    // Draw
-    g_cmdList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+    //// Draw
+    //g_cmdList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+
+    // Draw según geometría
+    if (g_geomMode == 0) // Cubo
+    {
+        g_cmdList->IASetVertexBuffers(0, 1, &g_vbView);
+        g_cmdList->IASetIndexBuffer(&g_ibView);
+        g_cmdList->DrawIndexedInstanced(36, 1, 0, 0, 0);
+    }
+    else // Esfera
+    {
+        g_cmdList->IASetVertexBuffers(0, 1, &g_sphereVBView);
+        g_cmdList->IASetIndexBuffer(&g_sphereIBView);
+        g_cmdList->DrawIndexedInstanced(g_sphereIndexCount, 1, 0, 0, 0);
+    }
 
     // Transition a Present
     Transition(g_cmdList.Get(), bb, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -738,7 +909,11 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int)
     CreateCmdListAndFence();
     CreateRootSigAndPSO();
     CreateCubeGeometryAndCB();
+    CreateSphereGeometry(0.5f, 32, 32); // radio y teselación
+
     InitCamera();
+
+    g_prevTick = std::chrono::high_resolution_clock::now();
 
     // Loop
     MSG msg = {};

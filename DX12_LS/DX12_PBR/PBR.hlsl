@@ -1,21 +1,30 @@
 cbuffer CB : register(b0)
 {
-    float4x4 mvp, world;
+    float4x4 mvp;
+    float4x4 world;
     float3 lightDir;
-    float ambient;
+    float ambient; // (ya no la usamos para PBR directo, pero la dejamos)
+
     int mode;
     float3 _pad1;
+
     float3 viewPos;
     float shininess;
     float specIntensity;
     float3 _pad2;
 
-    // NUEVO
+    // Material
     float3 baseColor;
     float metallic;
     float roughness;
     float ao;
     float2 _pad3;
+
+    // --- NUEVO: punto de luz físico ---
+    float3 lightPos;
+    float lightIntensity;
+    float3 lightColor;
+    float _pad4;
 }
 
 // --------------------------------------------------
@@ -86,7 +95,14 @@ float4 PSMain(PSIn i) : SV_TARGET
 {
     float3 N = normalize(i.nrmWS);
     float3 V = normalize(viewPos - i.posWS);
-    float3 L = normalize(-lightDir);
+    
+    // Luz puntual física
+    float3 Lvec = lightPos - i.posWS;
+    float dist2 = max(dot(Lvec, Lvec), 1e-6); // r^2
+    float dist = sqrt(dist2);
+    float3 L = Lvec / dist;
+    
+    //float3 L = normalize(-lightDir);
     float3 H = normalize(V + L);
 
     float NdotL = max(dot(N, L), 0.0);
@@ -94,6 +110,8 @@ float4 PSMain(PSIn i) : SV_TARGET
     float NdotH = max(dot(N, H), 0.0);
     float VoH = max(dot(V, H), 0.0);
 
+
+    
     //float3 baseColor = i.col;
     //float metallic = 0.8; // podés jugar con estos valores
     //float roughness = 0.4;
@@ -114,7 +132,8 @@ float4 PSMain(PSIn i) : SV_TARGET
     float3 kD = (1.0 - kS) * (1.0 - metallic);
 
     float3 diffuse = kD * baseColor / 3.14159;
-    float3 radiance = float3(1.0, 1.0, 1.0); // luz blanca directa
+    //float3 radiance = float3(1.0, 1.0, 1.0); // luz blanca directa
+    float3 radiance = lightColor * (lightIntensity / dist2); // <- 1/r^2
 
     float3 Lo = (diffuse + specular) * radiance * NdotL;
     float3 ambientC = float3(0.03, 0.03, 0.03) * baseColor * ao;
@@ -123,14 +142,22 @@ float4 PSMain(PSIn i) : SV_TARGET
     
     if (mode == 0)                  // 0 = Unlit
         color = baseColor;
+
     else if (mode == 1)             // 1 = Ambient (placeholder)
         color = baseColor * ambient;
+
     else if (mode == 2)             // 2 = Difuso Lambert only
-        color = baseColor * NdotL;
+        //color = baseColor * NdotL;
+        color = baseColor * radiance * NdotL;
+
     else if (mode == 3)             // 3 = Especular PBR only
-        color = specular;
+        //color = specular;
+        color = specular * radiance * NdotL;
+
     else if (mode == 4)             // 4 = Direct PBR (difuso+spec) sin ambient
-        color = (diffuse + specular) * NdotL;
+        //color = (diffuse + specular) * NdotL;
+        color = (diffuse + specular) * radiance * NdotL;
+
     else if (mode == 5)             // 5 = PBR completo básico (ambient placeholder + directo)
         color = ambientC + Lo;
 
