@@ -416,3 +416,6 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# --- Assets / Models ---
+!DX12_LS/DX12_PBR/Models/**/*.obj
