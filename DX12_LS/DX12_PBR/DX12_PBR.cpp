@@ -169,6 +169,12 @@
 #include <vector>
 #include <chrono>
 #include <cassert>
+#include <cstdio> // sprintf_s
+
+//Assimp
+#include <assimp/Importer.hpp>
+#include <assimp/scene.h>
+#include <assimp/postprocess.h>
 
 #pragma comment(lib, "d3d12.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -278,7 +284,7 @@ ComPtr<ID3D12Resource>              g_depthTex; // Textura de depth (Z-buffer) d
 
 // Root Signature + PSO (estado de pipeline)
 
-ComPtr<ID3D12RootSignature>         g_rootSig; // Root signature: describe qué recursos (CBVs, SRVs, samplers, etc.) puede ver el shader
+ComPtr<ID3D12RootSignature>         g_rootSig; // Root signature: describe qué recursos (CBVs (constant buffer view), SRVs (shader resolution view), samplers, etc.) puede ver el shader
                                                // y cómo se van a enlazar (root parameters, descriptor tables, etc.).
 ComPtr<ID3D12PipelineState>         g_pso; // Pipeline State Object: estado completo del pipeline gráfico (shaders, input layout,
                                            // rasterizer, depth-stencil, blend, formatos RT/DS, topology, etc.).
@@ -342,6 +348,13 @@ ComPtr<ID3D12Resource> g_sphereIB;
 D3D12_VERTEX_BUFFER_VIEW g_sphereVBView = {};
 D3D12_INDEX_BUFFER_VIEW  g_sphereIBView = {};
 UINT g_sphereIndexCount = 0;
+
+// Creamos buffers de geometría adicionales para probar un modelo
+ComPtr<ID3D12Resource> g_modelVB;
+ComPtr<ID3D12Resource> g_modelIB;
+D3D12_VERTEX_BUFFER_VIEW g_modelVBView = {};
+D3D12_INDEX_BUFFER_VIEW  g_modelIBView = {};
+UINT g_modelIndexCount = 0;
 
 // Selector de geometría: 0=Cubo, 1=Esfera
 static int g_geomMode = 0;
@@ -442,7 +455,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) // H
                 UpdateWindowTitle();
             }
             else if (wParam == 'G') { // alternar geometría
-                g_geomMode = (g_geomMode + 1) % 2; // 0..1
+                g_geomMode = (g_geomMode + 1) % 3; // 0..2
                 UpdateWindowTitle();
             }
             else if (wParam == 'F') { // F = fijar/liberar luz frente a cámara
@@ -734,7 +747,7 @@ void CreateRootSigAndPSO()
     pso.SampleMask = UINT_MAX;
     pso.RasterizerState = rast;
     pso.DepthStencilState = dss;
-    pso.InputLayout = { il, _countof(il) };
+    pso.InputLayout = { il, _countof(il) }; 
     pso.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     pso.NumRenderTargets = 1;
     pso.RTVFormats[0] = ChooseBackbufferFormat();
@@ -957,6 +970,150 @@ void CreateSphereGeometry(float radius = 0.5f, int stacks = 32, int slices = 32)
     }
 }
 
+void ExtractMeshCPU(
+    const aiMesh* mesh,
+    std::vector<Vertex>& outVerts,
+    std::vector<uint32_t>& outIndices)
+{
+    outVerts.clear();
+    outIndices.clear();
+
+    outVerts.reserve(mesh->mNumVertices);
+    outIndices.reserve(mesh->mNumFaces * 3);
+
+    const bool hasNormals = mesh->HasNormals();
+
+    for (unsigned int v = 0; v < mesh->mNumVertices; ++v)
+    {
+        const aiVector3D& p = mesh->mVertices[v];
+        XMFLOAT3 pos = XMFLOAT3(p.x, p.y, p.z);
+
+        XMFLOAT3 nrm = XMFLOAT3(0, 1, 0);
+        if (hasNormals)
+        {
+            const aiVector3D& n = mesh->mNormals[v];
+            nrm = XMFLOAT3(n.x, n.y, n.z);
+        }
+
+        // color debug por normal transformo [-1, 1]  →  [0, 1]
+        XMFLOAT3 col = XMFLOAT3(
+            0.5f * (nrm.x + 1.0f),
+            0.5f * (nrm.y + 1.0f),
+            0.5f * (nrm.z + 1.0f)
+        );
+
+        outVerts.push_back(Vertex{ pos, col, nrm });
+    }
+
+    for (unsigned int f = 0; f < mesh->mNumFaces; ++f)
+    {
+        const aiFace& face = mesh->mFaces[f];
+        if (face.mNumIndices != 3) continue;
+
+        outIndices.push_back((uint32_t)face.mIndices[0]);
+        outIndices.push_back((uint32_t)face.mIndices[1]);
+        outIndices.push_back((uint32_t)face.mIndices[2]);
+    }
+}
+
+void CreateCustomModelGeometry(const std::string& fileName)
+{
+    Assimp::Importer importer;
+
+    const unsigned int flags =
+        aiProcess_Triangulate |
+        aiProcess_FlipUVs |
+        aiProcess_GenSmoothNormals |
+        aiProcess_JoinIdenticalVertices;
+
+    const aiScene* scene = importer.ReadFile(fileName, flags);
+
+    if (!scene || (scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE) || !scene->mRootNode || scene->mNumMeshes == 0)
+    {
+        OutputDebugStringA("Assimp load failed:\n");
+        OutputDebugStringA(importer.GetErrorString());
+        OutputDebugStringA("\n");
+        return;
+    }
+
+    const aiMesh* mesh = scene->mMeshes[0];
+
+    std::vector<Vertex> verts;
+    std::vector<uint32_t> inds;
+
+    ExtractMeshCPU(mesh, verts, inds);
+
+    g_modelIndexCount = (UINT)inds.size();
+
+    // --- VB (UPLOAD) ---
+    {
+        const UINT vbSize = (UINT)(verts.size() * sizeof(Vertex));
+
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = vbSize;
+        rd.Height = 1;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.SampleDesc = { 1, 0 };
+        rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(g_device->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr, IID_PPV_ARGS(&g_modelVB)));
+
+        void* data = nullptr;
+        D3D12_RANGE rr = { 0, 0 };
+        ThrowIfFailed(g_modelVB->Map(0, &rr, &data));
+        memcpy(data, verts.data(), vbSize);
+        g_modelVB->Unmap(0, nullptr);
+
+        g_modelVBView.BufferLocation = g_modelVB->GetGPUVirtualAddress();
+        g_modelVBView.StrideInBytes = sizeof(Vertex);
+        g_modelVBView.SizeInBytes = vbSize;
+    }
+
+    // --- IB (UPLOAD) 32-bit ---
+    {
+        const UINT ibSize = (UINT)(inds.size() * sizeof(uint32_t));
+
+        D3D12_HEAP_PROPERTIES hp = {};
+        hp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+        D3D12_RESOURCE_DESC rd = {};
+        rd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        rd.Width = ibSize;
+        rd.Height = 1;
+        rd.DepthOrArraySize = 1;
+        rd.MipLevels = 1;
+        rd.SampleDesc = { 1, 0 };
+        rd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(g_device->CreateCommittedResource(
+            &hp, D3D12_HEAP_FLAG_NONE, &rd,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr, IID_PPV_ARGS(&g_modelIB)));
+
+        void* data = nullptr;
+        D3D12_RANGE rr = { 0, 0 };
+        ThrowIfFailed(g_modelIB->Map(0, &rr, &data));
+        memcpy(data, inds.data(), ibSize);
+        g_modelIB->Unmap(0, nullptr);
+
+        g_modelIBView.BufferLocation = g_modelIB->GetGPUVirtualAddress();
+        g_modelIBView.Format = DXGI_FORMAT_R32_UINT;
+        g_modelIBView.SizeInBytes = ibSize;
+    }
+
+    char buf[256];
+    sprintf_s(buf, "Model GPU upload OK. Verts: %zu | Indices: %zu\n", verts.size(), inds.size());
+    OutputDebugStringA(buf);
+}
+
 //--------------------------------------------------------------------------------------
 // Init de matrices de cámara
 //--------------------------------------------------------------------------------------
@@ -1012,6 +1169,11 @@ void UpdateCB()
     XMMATRIX mWorld =
         XMMatrixRotationX(g_rotTime * 0.7f) *
         XMMatrixRotationY(g_rotTime * 1.1f);
+
+    if (g_geomMode == 2) // modelo
+    {
+        mWorld = XMMatrixScaling(0.25f, 0.25f, 0.25f) * mWorld;
+    }
 
     XMMATRIX mvp = mWorld * g_view * g_proj;
 
@@ -1105,12 +1267,18 @@ void RecordRender()
         g_cmdList->IASetIndexBuffer(&g_ibView); //Set index buffer
         g_cmdList->DrawIndexedInstanced(36, 1, 0, 0, 0); //36 índices para el cubo
     }
-    else // Esfera
+    else if (g_geomMode == 1) // Esfera
     {
         g_cmdList->IASetVertexBuffers(0, 1, &g_sphereVBView);
         g_cmdList->IASetIndexBuffer(&g_sphereIBView);
         g_cmdList->DrawIndexedInstanced(g_sphereIndexCount, 1, 0, 0, 0);
     }
+    else // 2: Modelo 
+    {
+        g_cmdList->IASetVertexBuffers(0, 1, &g_modelVBView);
+        g_cmdList->IASetIndexBuffer(&g_modelIBView);
+        g_cmdList->DrawIndexedInstanced(g_modelIndexCount, 1, 0, 0, 0);
+}
 
     // Transition a Present listo para que el swap chain lo muestre
     Transition(g_cmdList.Get(), bb, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
@@ -1164,7 +1332,8 @@ int APIENTRY wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int) //Aplicación
 
     CreateCubeGeometryAndCB();
     CreateSphereGeometry(0.5f, 32, 32); // radio y teselación
-
+    CreateCustomModelGeometry("Models/Intergalactic_Spaceship-(Wavefront).obj");
+   
     InitCamera();
 
     g_prevTick = std::chrono::high_resolution_clock::now();
