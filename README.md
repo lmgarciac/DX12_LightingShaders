@@ -14,6 +14,8 @@ It renders a rotating cube (or sphere) using a basic **Physically-Based Renderin
 
 <img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/99628ac3-871c-48e5-87b6-3cbfbb979adb" />
 
+<img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/93cecf7c-698f-4264-9d44-f0a4aadf2ddf" />
+
 
 ## Purpose of the Project
 
