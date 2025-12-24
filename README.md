@@ -120,7 +120,8 @@ The project prioritizes **clarity over architecture** and **explicitness over ab
 ## Build & Run Instructions
 
 1. Open the project in **Visual Studio**.
-2. **Build and run in `Release x64`** — this is the default expected configuration.
+2. Set DX12_PBR as the default project.
+3. **Build and run in `Release x64`** — this is the default expected configuration.
 
 You should see a rotating cube sphere or model with real-time lighting.
 
