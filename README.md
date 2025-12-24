@@ -10,6 +10,11 @@ It renders a rotating cube (or sphere) using a basic **Physically-Based Renderin
 > **Note:** Make sure you run DX12_PBR project inside the solution. All the other projects are basically a pathway to reach this one which is the last version.
 ---
 
+<img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/c5ae955f-6e1f-4899-bc09-a08d4342d550" />
+
+<img width="1282" height="752" alt="image" src="https://github.com/user-attachments/assets/99628ac3-871c-48e5-87b6-3cbfbb979adb" />
+
+
 ## Purpose of the Project
 
 - Build a minimal but complete **DX12 rendering pipeline** from scratch.
