@@ -1,7 +1,7 @@
-# DirectX 12 PBR – Rotating Cube / Sphere
+# DirectX 12 PBR – Rotating Cube / Sphere / Model
 
 This is a small **learning project** written in C++ and DirectX 12.  
-It renders a rotating cube (or sphere) using a basic **Physically-Based Rendering (PBR)** shading model (Cook–Torrance / GGX).
+It renders a rotating cube, sphere or pre loaded model using a basic **Physically-Based Rendering (PBR)** shading model (Cook–Torrance / GGX).
 
 > **Note:** This project is intentionally simple and self-contained.  
 > It is not meant to be a reusable engine or production-quality code.  
@@ -85,6 +85,7 @@ The project prioritizes **clarity over architecture** and **explicitness over ab
 ### **Geometry & Camera**
 - Hardcoded cube (24 vertices, per-face normals).
 - Procedurally generated sphere (stacks × slices).
+- Pre loaded model using assimp library.
 - Camera setup:
   - `XMMatrixLookAtLH`
   - `XMMatrixPerspectiveFovLH`
@@ -102,7 +103,7 @@ The project prioritizes **clarity over architecture** and **explicitness over ab
 | **R** | Cycle roughness presets |
 | **A** | Cycle ambient occlusion presets |
 | **P** | Pause/resume rotation |
-| **G** | Toggle geometry (cube ↔ sphere) |
+| **G** | Toggle geometry (cube ↔ sphere ↔ model) |
 | **F** | Pin/unpin light to the camera |
 
 ---
